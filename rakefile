@@ -1,0 +1,30 @@
+require 'rake'
+require 'json'
+require 'net/http'
+require 'uri'
+require 'sqlite3'
+require_relative 'app.rb'
+
+task :obtener_datos_usgs do
+  uri = URI.parse("https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_month.geojson")
+  response = Net::HTTP.get_response(uri)
+  data = JSON.parse(response.body)
+
+  data['features'].each do |feature|
+    properties = feature['properties']
+    coordinates = feature['geometry']['coordinates']
+
+    # Validaciones
+    next if properties['title'].nil? || properties['url'].nil? || properties['place'].nil? || properties['magType'].nil? || coordinates.nil?
+    next if properties['mag'] < -1.0 || properties['mag'] > 10.0 || coordinates[1] < -90.0 || coordinates[1] > 90.0 || coordinates[0] < -180.0 || coordinates[0] > 180.0
+
+    # No duplicar registros
+    next if DB.execute("SELECT COUNT(*) FROM features WHERE external_id = ?", [feature['id']])[0][0] > 0
+
+    # Persistir datos en la base de datos
+    DB.execute("INSERT INTO features (external_id, magnitude, place, time, url, tsunami, mag_type, title, longitude, latitude)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+               [feature['id'], properties['mag'], properties['place'], properties['time'], properties['url'],
+                properties['tsunami'], properties['magType'], properties['title'], coordinates[0], coordinates[1]])
+  end
+end
